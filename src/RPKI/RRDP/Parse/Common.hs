@@ -6,6 +6,7 @@ import           Control.Monad.Trans.Except
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
+import           Data.Int                         (Int64)
 import qualified Data.List                        as List
 
 import           Data.STRef
@@ -54,8 +55,11 @@ parseSerial :: Monad m =>
             (RrdpSerial -> ExceptT RrdpError m v) ->
             ExceptT RrdpError m v
 parseSerial v f =  case parseInteger v of
-    Nothing -> throwE $ BrokenSerial $ convert v
-    Just s  -> f $ RrdpSerial s
+    -- Serials are stored as 64-bit integers, anything bigger 
+    -- is not going to happen in practice
+    Just s | s >= toInteger (minBound :: Int64) && s <= toInteger (maxBound :: Int64) 
+            -> f $ RrdpSerial s
+    _       -> throwE $ BrokenSerial $ convert v
 
 makeHash :: BS.ByteString -> Maybe Hash
 makeHash bs = mkHash . toBytes <$> hexString bs

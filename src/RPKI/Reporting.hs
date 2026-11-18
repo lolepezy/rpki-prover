@@ -218,7 +218,10 @@ data RrdpError = BrokenXml Text |
                 ObjectExistsWhenReplacing URI Hash |
                 RrdpUnsupportedObjectType Text | 
                 RrdpDownloadTimeout Seconds | 
-                UnknownRrdpProblem Text
+                UnknownRrdpProblem Text |
+                -- The server responded with 429 or 503, with the delay 
+                -- it asked for in Retry-After, if there was a valid one
+                RrdpServerBusy Text HttpStatus (Maybe Seconds)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 

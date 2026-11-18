@@ -172,6 +172,10 @@ toRrdpMessage = \case
     UnknownRrdpProblem e -> 
         [i|Unknown problem with RRDP: #{e}.|]  
 
+    RrdpServerBusy url status retryAfter -> 
+        [i|Server responded with HTTP status #{status} to #{url}|] <> 
+            maybe "." (\t -> [i|, asked to retry after #{t}.|]) retryAfter
+
 
 toValidationMessage :: ValidationError -> Text
 toValidationMessage = \case      

@@ -143,7 +143,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     let status = getMeta repository ^. #status
                     for_ (fetchMoment status) $ \lastFetch -> do 
                         worldVersion <- newWorldVersion
-                        let interval = nextRefreshInterval config repository worldVersion status Nothing 0
+                        let interval = nextRefreshInterval config repository worldVersion status Nothing Nothing 0
                         let pause = leftToWaitMicros (Earlier lastFetch) (Later now) interval                                        
                         when (pause > 0) $ do  
                             let pauseSeconds = pause `div` 1_000_000
@@ -188,12 +188,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             case r of
                 Right (repository', stats) -> do
                     interval <- recordFetchOutcome repository' worldVersion 
-                                    (FetchedAt (versionToInstant worldVersion)) stats duration validations
+                                    (FetchedAt (versionToInstant worldVersion)) stats Nothing duration validations
                     pure $ Just interval
 
-                Left _ -> do
+                Left e -> do
                     interval <- recordFetchOutcome repository worldVersion 
-                                    (FailedAt (versionToInstant worldVersion)) Nothing duration validations
+                                    (FailedAt (versionToInstant worldVersion)) Nothing (serverAskedDelay e) duration validations
 
                     fetchableForUrl >>= \case
                         Nothing -> 
@@ -261,7 +261,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 case r of 
                     Right ErikFetchStat {..} -> do 
                         let newStatus = FetchedAt (versionToInstant worldVersion)
-                        interval <- recordFetchOutcome repository worldVersion newStatus Nothing duration validations
+                        interval <- recordFetchOutcome repository worldVersion newStatus Nothing Nothing duration validations
                         saveErikFetchOutcome fqdn newStatus interval relayUsage validations
                         pure $ Just interval
 
@@ -272,7 +272,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         -- only trace of it is in the log. The repository itself is 
                         -- left alone, the primary fetch below will update it.
                         saveErikFetchOutcome fqdn newStatus 
-                            (nextRefreshInterval config repository worldVersion newStatus Nothing duration) 
+                            (nextRefreshInterval config repository worldVersion newStatus Nothing Nothing duration) 
                             [] validations
                         fetchPrimary repository worldVersion       
          
@@ -344,8 +344,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     -- Apply the outcome of a fetch attempt to the repository: the new status and 
     -- the interval until the next attempt, both stored together with the 
     -- validations the attempt produced. Gives the interval back to the fetch loop.
-    recordFetchOutcome repository worldVersion newStatus stats duration validations = do 
-        let interval = nextRefreshInterval config repository worldVersion newStatus stats duration
+    recordFetchOutcome repository worldVersion newStatus stats askedDelay duration validations = do 
+        let interval = nextRefreshInterval config repository worldVersion newStatus stats askedDelay duration
         let updated  = updateMeta' repository 
                         (\meta -> meta & #status .~ newStatus 
                                       & #refreshInterval ?~ interval)

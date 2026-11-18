@@ -1,6 +1,9 @@
 module RPKI.FetchSpec where
 
+import           Control.Lens
 import           Data.Text (Text)
+import           Data.String.Interpolate.IsString
+import           Data.Hourglass                  (Seconds(..))
 
 import           Test.Tasty
 import           Test.Tasty.HUnit                as HU
@@ -9,10 +12,13 @@ import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import qualified Data.IxSet.Typed                as IxSet
 
+import           RPKI.AppTypes
 import           RPKI.Domain
+import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Fetch.Fetch
 import           RPKI.Time
+import           RPKI.TestCommons
 
 
 uriTaSet :: [(Text, Text)] -> UriTaIxSet
@@ -42,8 +48,38 @@ ta3 = "TA3"
 workflowSpec :: TestTree
 workflowSpec = testGroup "Fetching" [ 
         urisPerTaSpec,
-        loadMarksSpec
+        loadMarksSpec,
+        refreshIntervalSpec
     ]
+
+refreshIntervalSpec :: TestTree
+refreshIntervalSpec = testGroup "Refresh interval" [ 
+
+    HU.testCase "Takes the delay asked by the server from the error" $ do 
+        serverAskedDelay (RrdpE $ RrdpServerBusy "u" (HttpStatus 503) (Just (Seconds 5))) @?= Just (Seconds 5)
+        serverAskedDelay (RrdpE $ RrdpServerBusy "u" (HttpStatus 429) Nothing) @?= Nothing
+        serverAskedDelay (RrdpE $ CantDownloadDelta "timeout") @?= Nothing
+
+  , HU.testCase "Waits after a failure at least as long as the server asked, within the maximal back-off" $ do 
+        Now now <- thisInstant
+        let failed = FailedAt now
+        let backoff = interval failed Nothing
+        HU.assertBool [i|Back-off #{backoff} should be short|] (backoff < Seconds 200)
+        interval failed (Just (Seconds 600)) @?= Seconds 600
+        interval failed (Just (Seconds 1)) @?= backoff
+        interval failed (Just (Seconds 100_000)) @?= maxBackoff
+
+  , HU.testCase "Ignores the delay after a success" $ do 
+        Now now <- thisInstant
+        interval (FetchedAt now) (Just (Seconds 600)) @?= interval (FetchedAt now) Nothing
+    ]
+  where
+    repository = updateMeta' (newRepository (RrdpU (RrdpURL (URI repo1)))) 
+                    (#refreshInterval ?~ Seconds 60)
+    interval status askedDelay = 
+        nextRefreshInterval testConfig repository (WorldVersion 1) status Nothing askedDelay (TimeMs 100)
+    maxBackoff = testConfig ^. #fetchIntervalConfig . #maxFailedBackoffInterval
+
 
 urisPerTaSpec :: TestTree
 urisPerTaSpec = testGroup "URIs per TA" [ 
