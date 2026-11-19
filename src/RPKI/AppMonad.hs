@@ -156,6 +156,12 @@ appWarn = validatorWarning . VWarning
 vWarn :: Validator es => ValidationError -> Eff es ()
 vWarn = appWarn . ValidationE
 
+downgradeToWarning :: Validator es => AppError -> Eff es ()
+downgradeToWarning e = do
+    scopes <- askScopes
+    modifyVState $ typed %~ removeValidation (scopes ^. typed) (== e)
+    appWarn e
+
 trace :: State ValidationState :> es => Trace -> Eff es ()
 trace t = modifyVState $ typed %~ (mTrace t <>)
 

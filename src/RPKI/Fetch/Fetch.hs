@@ -341,15 +341,27 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
-fetchTACertificate appContext@AppContext {..} tal =
+-- | Fetch the TA certificate from the TAL locations, trying them one by one
+-- | until one of them gives an object that passes `validate`. So a location
+-- | serving an invalid (e.g. expired) certificate doesn't prevent using a
+-- | valid one from another location.
+fetchTACertificate :: (ValidatorIO es, Timeout :> es) =>
+                    AppContext
+                    -> TAL
+                    -> (RpkiURL -> ParsedRpkiObject -> Eff es a)
+                    -> Eff es (RpkiURL, a)
+fetchTACertificate appContext@AppContext {..} tal validate =
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
-    go []         = appError $ TAL_E $ TALError "None of the certificate locations could be fetched."
-    go (u : uris) = tryFetch `catchError` (\_cs -> goToNext)
+    go []         = appError $ TAL_E $ TALError "None of the certificate locations gave a valid TA certificate."
+    go (u : uris) = tryFetch `catchError` (\_cs e -> do
+                        -- The failure is recovered from by trying the next location
+                        -- (or the cached copy), so it is only a warning.
+                        downgradeToWarning e
+                        goToNext e)
       where
         tryFetch =
-            timeoutVT timeout fetchTaCert (goToNext timeoutError)
+            timeoutVT timeout fetchTaCert (appWarn timeoutError >> goToNext timeoutError)
 
         (timeout, timeoutError) = let
             rsyncT = rsyncFetchTimeout config
@@ -363,13 +375,11 @@ fetchTACertificate appContext@AppContext {..} tal =
             ro <- case u of
                 RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
                 RrdpU rrdpU   -> downloadRpkiObject appContext rrdpU
-            pure (u, ro)
-            
-        goToNext e = do            
-            let message = [i|Failed to fetch #{getURL u}: #{e}|]
-            logError logger message
-            validatorWarning $ VWarning e
-            go uris            
+            (u, ) <$> validate u ro
+
+        goToNext e = do
+            logError logger [i|Failed to fetch or validate TA certificate from #{getURL u}: #{e}|]
+            go uris
 
 
 fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext
