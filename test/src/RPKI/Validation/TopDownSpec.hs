@@ -8,6 +8,8 @@ import           Control.Monad                    (void)
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Short            as BSS
 import           Data.Either                      (isLeft, isRight)
+import           Data.IORef                       (readIORef)
+import qualified Data.List                        as List
 import           Data.Int                         (Int64)
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
@@ -58,7 +60,9 @@ import           RPKI.Validation.TopDown.Context
                 ( ChildSource (..)
                 , Limited (..)
                 , TopDownContext
+                , TopDownCounters (..)
                 , acceptLeaf
+                , applyValidationSideEffects
                 , markAsUsed
                 , newAllTasTopDownContext
                 , newTopDownContext
@@ -67,12 +71,19 @@ import           RPKI.Validation.TopDown.Shortcuts
                 ( MftPlan (..)
                 , MftShortcutOp
                 , ShortcutWrites (..)
+                , canTakeLeaves
+                , deleteMftShortcut
+                , leafPayloadsOf
                 , makeChildWithIssues
                 , manifestValidityPeriod
                 , planManifests
+                , replaceMftShortcut
                 , revokedShortcutChildren
+                , saveLeafPayloads
                 , shortcutWrites
                 , storeShortcuts
+                , updateMftShortcut
+                , updateMftShortcutChildren
                 )
 
 
@@ -95,6 +106,10 @@ topDownRegressionGroup =
         , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
         , HU.testCase "Forces a snapshot only when no manifest can be used" shouldForceSnapshotOnlyWithoutFallback
         , HU.testCase "Tells integrity errors and the repository they are in" shouldTellIntegrityErrors
+        , HU.testCase "Makes the leaf payloads of a shortcut" shouldMakeLeafPayloads
+        , HU.testCase "Tells when the leaf payloads can be taken" shouldTellWhenLeavesCanBeTaken
+        , HU.testCase "Keeps the leaf payloads in step with the shortcut" shouldKeepLeafPayloadsInStep
+        , HU.testCase "Takes the leaves of a shortcut from the leaf payloads" shouldTakeLeavesFromLeafPayloads
         ]
 
 
@@ -632,6 +647,283 @@ shouldTellIntegrityErrors = do
         Nothing (innermostRrdpPP $ subScope PPFocus testRsyncPP scope)
 
 
+-- | The leaf payloads of a shortcut are the payloads of the children that
+-- are not CA certificates, and there are none if one of them is troubled.
+shouldMakeLeafPayloads :: HU.Assertion
+shouldMakeLeafPayloads = do
+    let mftKey = objectKey 100
+        payloadsOf = leafPayloadsOf mftKey . Map.fromList
+        caChild k = (objectKey k, (CaChild (testCaShortcut $ objectKey k) (Serial 3), Just ValidCaChild))
+        troubledCa k = (objectKey k, (TroubledChild $ objectKey k, Just InvalidCaChild))
+        gbr = testGbrShortcut (objectKey 3) & #notBefore .~ Instant 0 & #notAfter .~ Instant 200
+
+    HU.assertEqual "The leaves, with when all of them are valid"
+        (Just LeafPayloadsRow {
+            mftKey        = mftKey,
+            notBefore     = Instant 20,
+            notAfter      = Instant 80,
+            hasCaChildren = True,
+            leaves        = LeafPayloads {
+                leafKeys     = map objectKey [1, 2, 3],
+                leafVrps     = [ T2 (VrpsPerAs (ASN 1) [] []) (objectKey 1),
+                                 T2 (VrpsPerAs (ASN 2) [] []) (objectKey 2) ],
+                leafSpls     = [],
+                leafAspas    = [],
+                leafGbrs     = [gbr.gbr],
+                leafBgpCerts = []
+            }
+        })
+        (payloadsOf [ testRoaChild 1 10 100, testRoaChild 2 20 80,
+                      (objectKey 3, (GbrChild gbr (Serial 2), Nothing)),
+                      caChild 4, troubledCa 5 ])
+
+    HU.assertEqual "None with a troubled leaf"
+        Nothing
+        (payloadsOf [testRoaChild 1 10 100, (objectKey 6, (TroubledChild $ objectKey 6, Nothing))])
+
+    HU.assertEqual "None with a CA certificate that is not with the CA children"
+        Nothing
+        (payloadsOf [testRoaChild 1 10 100, (objectKey 4, (CaChild (testCaShortcut $ objectKey 4) (Serial 3), Nothing))])
+
+    HU.assertEqual "Only CA certificates"
+        (Just $ LeafPayloadsRow mftKey (Instant minBound) (Instant maxBound) True (LeafPayloads [] [] [] [] [] []))
+        (payloadsOf [caChild 4])
+
+
+-- | The leaf payloads are taken for the manifest they are made for, when 
+-- each of the leaves would be taken as it is.
+shouldTellWhenLeavesCanBeTaken :: HU.Assertion
+shouldTellWhenLeavesCanBeTaken = do
+    let mftKey = objectKey 100
+        row = fromJustOr "No leaf payloads" $
+                leafPayloadsOf mftKey $ Map.fromList [testRoaChild 1 20 80, testRoaChild 2 10 100]
+        canTake now multiLocation key =
+            canTakeLeaves (Now $ Instant now) (Set.fromList $ map objectKey multiLocation) key row
+
+    HU.assertBool "All of them are valid" (canTake 50 [] mftKey)
+    HU.assertBool "From the latest notBefore" (canTake 20 [] mftKey)
+    HU.assertBool "Until the earliest notAfter, including it" (canTake 80 [] mftKey)
+    HU.assertBool "Not before all of them are valid" (not $ canTake 19 [] mftKey)
+    HU.assertBool "Not after one of them expired" (not $ canTake 81 [] mftKey)
+    HU.assertBool "Not for another manifest" (not $ canTake 50 [] (objectKey 101))
+    HU.assertBool "Not with a leaf at more than one location" (not $ canTake 50 [2] mftKey)
+    HU.assertBool "Other objects at more than one location don't matter" (canTake 50 [3] mftKey)
+
+
+-- | Leaf payloads are what the children of the shortcut were when they were 
+-- written: anything that changes the shortcut or deletes one of its children
+-- deletes them.
+shouldKeepLeafPayloadsInStep :: HU.Assertion
+shouldKeepLeafPayloadsInStep =
+    withIncrementalContext $ \appContext -> do
+        db <- readTVarIO $ appContext ^. #database
+        Now now <- thisInstant
+        let aki = AKI (mkKI "44444444444444444444")
+        mftKey <- storeTestObject appContext MFT "manifest"
+        roa1   <- storeTestObject appContext ROA "roa 1"
+        roa2   <- storeTestObject appContext ROA "roa 2"
+        roa3   <- storeTestObject appContext ROA "roa 3"
+
+        let entry k notAfter_ = (k, MftEntry "a.roa" (RoaChild (testRoaShortcut k
+                                        & #notBefore .~ momentAfter now (-3600)
+                                        & #notAfter  .~ notAfter_) (Serial 1)) Nothing)
+            entries  = [entry roa1 (momentAfter now 3600), entry roa2 (momentAfter now 7200)]
+            shortcut = testMftShortcut entries & #key .~ mftKey
+            row = fromJustOr "No leaf payloads" $ leafPayloadsOf mftKey $
+                    Map.fromList [ (k, (e.child, e.caCert)) | (k, e) <- entries ]
+            stored moment = DB.roTx db $ \tx -> DB.getLeafPayloads tx aki mftKey moment
+            storedNow = stored now
+            save = writeShortcuts appContext $ \q -> saveLeafPayloads q aki row
+            assertGone what = storedNow >>= HU.assertEqual what Nothing
+
+        writeShortcuts appContext $ \q -> replaceMftShortcut q aki shortcut
+        save
+        storedNow >>= HU.assertEqual "They are there" (Just row)
+
+        stored (momentAfter now (-3601)) >>= HU.assertEqual "Not before all leaves are valid" Nothing
+        stored (momentAfter now 3600) >>= HU.assertEqual "Until the first of them expires" (Just row)
+        stored (momentAfter now 3601) >>= HU.assertEqual "Not after" Nothing
+        DB.roTx db (\tx -> DB.getLeafPayloads tx aki roa1 now)
+            >>= HU.assertEqual "Not for another manifest" Nothing
+
+        writeShortcuts appContext $ \q -> updateMftShortcut q aki shortcut
+        assertGone "The meta of the shortcut is written"
+
+        save
+        writeShortcuts appContext $ \q -> updateMftShortcutChildren q aki [entry roa3 (momentAfter now 3600)] []
+        assertGone "A child is added"
+
+        save
+        writeShortcuts appContext $ \q -> replaceMftShortcut q aki shortcut
+        assertGone "The shortcut is replaced"
+
+        save
+        writeShortcuts appContext $ \q -> deleteMftShortcut q aki
+        assertGone "The shortcut is deleted"
+
+        writeShortcuts appContext $ \q -> replaceMftShortcut q aki shortcut
+        save
+        DB.rwTx db $ \tx -> DB.deleteObjectByKey tx [roa2]
+        assertGone "The object of a leaf is deleted"
+
+        save
+        storedNow >>= HU.assertEqual "They are there again" (Just row)
+        DB.rwTx db $ \tx -> DB.deleteObjectByKey tx [mftKey]
+        assertGone "The manifest is deleted"
+
+        save
+        assertGone "Not written for a manifest that is gone"
+
+
+-- | Validating the manifest of a shortcut takes its leaves from the leaf
+-- payloads once they are written. The CA certificates on the manifest are
+-- validated as before, and the leaves are marked as used all the same.
+shouldTakeLeavesFromLeafPayloads :: HU.Assertion
+shouldTakeLeavesFromLeafPayloads =
+    withIncrementalContext $ \appContext -> do
+        db <- readTVarIO $ appContext ^. #database
+        Now now <- thisInstant
+        let aki = AKI (mkKI "55555555555555555555")
+            later = momentAfter now
+        mftKey <- storeTestObject appContext MFT "manifest"
+        storeMftMeta appContext aki mftKey 1 (later (-60))
+        roa1 <- storeTestObject appContext ROA "roa 1"
+        roa2 <- storeTestObject appContext ROA "roa 2"
+        caKey <- storeFixtureCa appContext
+        -- The CA and its CA child have the resources of a real certificate,
+        -- so that the child is valid
+        fixtureResources <- fixtureCa >>= \case
+            CaFull c -> pure $ getResources c.payload
+            CaShort c -> pure c.resources
+
+        let roa k asn notAfter_ = (k, MftEntry "a.roa" (RoaChild (testRoaShortcut k
+                                        & #notBefore  .~ later (-3600)
+                                        & #notAfter   .~ notAfter_
+                                        & #roaPayload .~ VrpsPerAs (ASN asn) [] []) (Serial 1)) Nothing)
+            caCert = testCaShortcut caKey
+                        & #notAfter  .~ later 86400
+                        & #resources .~ fixtureResources
+            shortcut = testMftShortcut [ roa roa1 1 (later 10800), roa roa2 2 (later 3600),
+                                         (caKey, MftEntry "a.cer" (CaChild caCert (Serial 3)) (Just ValidCaChild)) ]
+                        & #key         .~ mftKey
+                        & #notBefore   .~ later (-3600)
+                        & #notAfter    .~ later 86400
+                        & #crlShortcut .~ CrlShortcut (objectKey 101) (later (-3600)) (later 86400)
+        writeShortcuts appContext $ \q -> replaceMftShortcut q aki shortcut
+
+        let ca = CaShort $ testCaShortcut (objectKey 999)
+                            & #notAfter  .~ later 86400
+                            & #resources .~ fixtureResources
+            validate = validateWith appContext
+            validateWith appContext' moment adjust = do
+                (topDownContext_, queue) <- newTestTopDownContextAt appContext' moment
+                let topDownContext = adjust topDownContext_
+                (r, state) <- runValidatorIO (newScopes "leaves") $
+                                vFocusOn PPFocus testRrdpPP $
+                                    validateManifests appContext' topDownContext ca aki
+                atomically $ closeCQueue queue
+                storeShortcuts appContext' queue
+                applyValidationSideEffects appContext' (topDownContext ^. #allTas)
+                let counters = topDownContext ^. #allTas . #topDownCounters
+                hitMissWrite <- (,,) <$> readIORef counters.leafPayloadsHit
+                                     <*> readIORef counters.leafPayloadsMiss
+                                     <*> readIORef counters.leafPayloadsWrite
+                vrps <- readIORef $ topDownContext ^. #payloadBuilder . #vrps
+                validatedBy <- DB.rwTx db $ \tx -> DB.updateValidatedByVersionMap tx id
+                let used = Map.keysSet $ Map.filter (== instantToVersion moment) validatedBy
+                pure (r, state, hitMissWrite, List.sortOn (\(T2 _ k) -> k) vrps, used)
+            vrpsOf ks = [ T2 (VrpsPerAs (ASN asn) [] []) k | (asn, k) <- ks ]
+
+        (r1, state1, counters1, vrps1, used1) <- validate now id
+        HU.assertBool "The first validation succeeds" (isRight r1)
+        HU.assertEqual "Leaf payloads are written" (0, 1, 1) counters1
+        HU.assertEqual "With the payloads of the leaves" (vrpsOf [(1, roa1), (2, roa2)]) vrps1
+        HU.assertBool "The leaves, the manifest and the CA child are used"
+            (Set.fromList [roa1, roa2, caKey, mftKey] `Set.isSubsetOf` used1)
+
+        (r2, state2, counters2, vrps2, used2) <- validate (later 1) id
+        HU.assertBool "The second validation succeeds" (isRight r2)
+        HU.assertEqual "The leaf payloads are taken" (1, 0, 0) counters2
+        HU.assertEqual "The same payloads" vrps1 vrps2
+        HU.assertEqual "The same issues" state1.validations state2.validations
+        HU.assertEqual "The same metrics" state1.topDownMetric state2.topDownMetric
+        HU.assertBool "The leaves and the CA child are still used"
+            (Set.fromList [roa1, roa2, caKey, mftKey] `Set.isSubsetOf` used2)
+
+        -- The resources of the leaves are checked again
+        let reconsidered = appContext & #config . #validationConfig . #validationRFC .~ ReconsideredRFC
+        (_, _, counters3, _, _) <- validateWith reconsidered (later 2) (#overclaimingHappened .~ True)
+        HU.assertEqual "Not with resources to check" (0, 1, 0) counters3
+
+        -- One of the leaves is expired
+        (_, state4, counters4, vrps4, _) <- validate (later 3601) id
+        HU.assertEqual "Not after a leaf expired, and nothing is written" (0, 1, 0) counters4
+        HU.assertEqual "The leaves one by one" (vrpsOf [(1, roa1)]) vrps4
+        let Validations issues = state4.validations
+        HU.assertBool "The expired leaf is an error"
+            (any (any isExpired . Set.toList) $ Map.elems issues)
+  where
+    isExpired = \case
+        VErr (ValidationE (ObjectIsExpired _ _)) -> True
+        _                                        -> False
+
+
+-- | Run the queued shortcut writes
+writeShortcuts :: AppContext -> (ClosableQueue MftShortcutOp -> IO ()) -> IO ()
+writeShortcuts appContext f = do
+    queue <- newCQueueIO 10
+    f queue
+    atomically $ closeCQueue queue
+    storeShortcuts appContext queue
+
+-- | An object of the type, with no locations; `name` makes it unique
+storeTestObject :: AppContext -> RpkiObjectType -> String -> IO ObjectKey
+storeTestObject appContext type_ name = do
+    db <- readTVarIO $ appContext ^. #database
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    let blob = BS.pack $ map (fromIntegral . fromEnum) name
+    DB.rwTx db $ \tx -> DB.saveObject tx (OriginalRO (ObjectOriginal blob) mempty (testHash blob) type_) worldVersion
+
+-- | The fixture CA certificate, parsed, so that it's in `certificates`
+storeFixtureCa :: AppContext -> IO ObjectKey
+storeFixtureCa appContext = do
+    db <- readTVarIO $ appContext ^. #database
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    (Right (url, object), _) <- runValidatorIO (newScopes "ca") $ do
+        (url, _, parsed) <- readFixtureObject "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+        (url, ) <$> prevalidateObject parsed
+    storeLifecycle db worldVersion (WellStructuredRO object) url
+
+-- | A manifest of the AKI with this object
+storeMftMeta :: AppContext -> AKI -> ObjectKey -> Int64 -> Instant -> IO ()
+storeMftMeta appContext aki key n thisTime_ = do
+    db <- readTVarIO $ appContext ^. #database
+    let meta = MftMeta {
+            key           = key,
+            mftNumber     = Serial (fromIntegral n),
+            thisTime      = thisTime_,
+            nextTime      = momentAfter thisTime_ 86400,
+            contentDigest = testHash "manifest"
+        }
+    DB.rwTx db $ \(DB.Tx conn) ->
+        SQLite.execute conn
+            "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"
+            (key, aki, serialiseField meta.mftNumber, serialiseField meta)
+
+-- | A ROA child of a manifest shortcut, valid from `notBefore_` until `notAfter_`
+testRoaChild :: Int64 -> Int64 -> Int64 -> (ObjectKey, (MftChild, Maybe CaChildValidity))
+testRoaChild k notBefore_ notAfter_ =
+    (objectKey k, (RoaChild roa (Serial 1), Nothing))
+  where
+    roa = testRoaShortcut (objectKey k)
+            & #notBefore  .~ Instant notBefore_
+            & #notAfter   .~ Instant notAfter_
+            & #roaPayload .~ VrpsPerAs (ASN $ fromIntegral k) [] []
+
+fromJustOr :: String -> Maybe a -> a
+fromJustOr message = maybe (error message) id
+
+
 -- | Shortcuts are only used by incremental validation
 withIncrementalContext :: (AppContext -> IO a) -> IO a
 withIncrementalContext f =
@@ -660,8 +952,13 @@ validateCaManifests appContext ppUrl aki = do
 -- | The context of validating a TA, with the queue of its shortcut writes
 newTestTopDownContext :: AppContext -> IO (TopDownContext, ClosableQueue MftShortcutOp)
 newTestTopDownContext appContext = do
-    db <- readTVarIO $ appContext ^. #database
     Now now <- thisInstant
+    newTestTopDownContextAt appContext now
+
+-- | The same as of the moment `now`
+newTestTopDownContextAt :: AppContext -> Instant -> IO (TopDownContext, ClosableQueue MftShortcutOp)
+newTestTopDownContextAt appContext now = do
+    db <- readTVarIO $ appContext ^. #database
     shortcutQueue <- newCQueueIO 10
     workPool      <- newWorkPool
     publicationPoints <- DB.roTx db DB.getPublicationPoints

@@ -8,8 +8,12 @@ import           Effectful
 import           Control.Concurrent.STM
 import           Control.Monad
 
+import qualified Data.ByteString                  as BS
 import           Data.Foldable
 import qualified Data.Map.Strict                  as Map
+import           Data.Maybe                       (isJust)
+import           Data.Set                         (Set)
+import qualified Data.Set                         as Set
 import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
@@ -292,6 +296,62 @@ shortcutChildRows entries =
         }
     | (k, MftEntry {..}) <- entries ]
 
+-- Leaf payloads --------------------------------------------------------------
+
+-- | The leaf payloads of a manifest shortcut with these children, i.e. the
+-- payloads of the children that are not CA certificates. There are none if 
+-- one of them is troubled, those are validated in full every time.
+--
+-- The CA certificates are the children with `CaChildValidity`, the ones in 
+-- `mft_shortcut_ca_children`. With the leaf payloads, only they are read.
+leafPayloadsOf :: ObjectKey
+               -> Map.Map ObjectKey (MftChild, Maybe CaChildValidity)
+               -> Maybe LeafPayloadsRow
+leafPayloadsOf mftKey children = do
+    leaves <- forM leafChildren $ \(k, (child, _)) -> do
+                guard $ case child of
+                            CaChild {} -> False
+                            _          -> True
+                -- Nothing for a troubled one
+                vp <- childValidityPeriod child
+                pure (k, child, vp)
+    pure LeafPayloadsRow {
+            mftKey        = mftKey,
+            notBefore     = maximum $ Instant minBound : [ vp.notBefore | (_, _, vp) <- leaves ],
+            notAfter      = minimum $ Instant maxBound : [ vp.notAfter  | (_, _, vp) <- leaves ],
+            hasCaChildren = not $ null caChildren,
+            leaves        = LeafPayloads {
+                leafKeys     = [ k | (k, _, _) <- leaves ],
+                leafVrps     = [ T2 r.roaPayload r.key | (_, RoaChild r _, _)    <- leaves ],
+                leafSpls     = [ s.splPayload          | (_, SplChild s _, _)    <- leaves ],
+                leafAspas    = [ a.aspa                | (_, AspaChild a _, _)   <- leaves ],
+                leafGbrs     = [ g.gbr                 | (_, GbrChild g _, _)    <- leaves ],
+                leafBgpCerts = [ b.bgpSec              | (_, BgpSecChild b _, _) <- leaves ]
+            }
+        }
+  where
+    (caChildren, leafChildren) =
+        List.partition (\(_, (_, caCert)) -> isJust caCert) $ Map.toList children
+
+-- | Whether the leaf payloads can be taken for the shortcut of the manifest 
+-- at this moment instead of its leaves one by one, i.e. every leaf would be
+-- taken as it is: it's valid, and it's not published at more than one 
+-- location (the locations of such an object are checked every time).
+--
+-- Whether the resources of the leaves have to be checked is up to the CA.
+canTakeLeaves :: Now -> Set ObjectKey -> ObjectKey -> LeafPayloadsRow -> Bool
+canTakeLeaves (Now now) multiLocationKeys mftKey row =
+    row.mftKey == mftKey
+    && row.notBefore <= now && now <= row.notAfter
+    && not (any (`Set.member` multiLocationKeys) row.leaves.leafKeys)
+
+saveLeafPayloads :: MonadIO m => ClosableQueue MftShortcutOp -> AKI -> LeafPayloadsRow -> m ()
+saveLeafPayloads shortcutQueue aki LeafPayloadsRow {..} =
+    liftIO $ do
+        let !blob = serialiseCompressed leaves
+        atomically $ writeCQueue shortcutQueue $
+            SaveLeafPayloads aki mftKey notBefore notAfter hasCaChildren blob
+
 deleteMftShortcut :: MonadIO m => ClosableQueue MftShortcutOp -> AKI -> m ()
 deleteMftShortcut shortcutQueue aki = 
     liftIO $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcut aki
@@ -303,19 +363,29 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
     readQueueChunked shortcutQueue 1000 $ \shotcutOps ->
         rwTxT database $ \tx ->
             for_ shotcutOps $ \case
-                UpdateMftShortcut aki s ->
+                -- Whatever changes the shortcut makes its leaf payloads stale.
+                -- Deleted children do that through a trigger as well, but new 
+                -- ones and the meta don't.
+                UpdateMftShortcut aki s -> do
+                    DB.deleteLeafPayloads tx aki
                     DB.saveMftShorcutMeta tx aki s
                 UpdateMftShortcutChildren aki inserts deletedKeys -> do
+                    DB.deleteLeafPayloads tx aki
                     unless (null inserts)     $ DB.insertMftShortcutChildren tx aki inserts
                     unless (null deletedKeys) $ DB.deleteMftShortcutChildren tx aki deletedKeys
                 ReplaceMftShortcut aki s children -> do
+                    DB.deleteLeafPayloads tx aki
                     DB.deleteMftShortcut tx aki
                     DB.saveMftShorcutMeta tx aki s
                     DB.insertMftShortcutChildren tx aki children
-                DeleteMftShortcut aki ->
+                DeleteMftShortcut aki -> do
+                    DB.deleteLeafPayloads tx aki
                     DB.deleteMftShortcut tx aki
+                SaveLeafPayloads aki mftKey notBefore notAfter hasCa blob ->
+                    DB.saveLeafPayloads tx aki mftKey notBefore notAfter hasCa blob
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
                    | UpdateMftShortcutChildren AKI [DB.ShortcutChildRow] [ObjectKey]
                    | ReplaceMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta)) [DB.ShortcutChildRow]
                    | DeleteMftShortcut AKI
+                   | SaveLeafPayloads AKI ObjectKey Instant Instant Bool BS.ByteString

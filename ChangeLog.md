@@ -69,4 +69,9 @@
   messages: inconsistent or invalid options, an unreadable directory to verify
   with RSC, a TA that is not in the cache or whose certificate is not, and
   unexpected exceptions.
-- Database version 68: the cache is rebuilt on the first start.
+- The payloads of the objects on a manifest other than CA certificates are
+  stored together for the manifest. While the manifest stays the same and
+  all of them are valid, validation takes them from there instead of going
+  through them one by one. It takes about 30% less CPU, half as much for
+  ARIN with its big manifests.
+- Database version 70: the cache is rebuilt on the first start.

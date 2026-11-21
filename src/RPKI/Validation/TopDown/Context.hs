@@ -84,6 +84,11 @@ data AllTasTopDownContext = AllTasTopDownContext {
         now               :: Now,
         worldVersion      :: WorldVersion,
         visitedKeys       :: TVar (Set ObjectKey),        
+        -- | Keys of the leaves taken in bulk (`acceptLeafPayloads`), a list
+        -- per manifest. They join `visitedKeys` at the end: adding thousands
+        -- of them to it at once is a long transaction that the short ones of
+        -- `markAsUsed` keep restarting.
+        visitedLeafKeys   :: IORef [[ObjectKey]],
         publicationPoints :: PublicationPoints,
         shortcutQueue     :: ClosableQueue MftShortcutOp,
         topDownCounters   :: TopDownCounters IORef,
@@ -114,7 +119,12 @@ data TopDownCounters f = TopDownCounters {
         updateMftChildren   :: f Int,
         readOriginal :: f Int,
         readParsed   :: f Int,
-        repeatedAki  :: f Int
+        repeatedAki  :: f Int,
+        -- manifests with shortcuts whose leaf payloads were used, the ones
+        -- whose leaves were read one by one, and leaf payloads written
+        leafPayloadsHit   :: f Int,
+        leafPayloadsMiss  :: f Int,
+        leafPayloadsWrite :: f Int
     }
     deriving stock (Generic)
     deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
@@ -164,6 +174,7 @@ newAllTasTopDownContext :: MonadIO m =>
 newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys workPool = liftIO $ do 
     let now = Now $ versionToInstant worldVersion
     topDownCounters <- newTopDownCounters
+    visitedLeafKeys <- newIORef []
     atomically $ do        
         visitedKeys    <- newTVar mempty 
         pure $! AllTasTopDownContext {..}
@@ -194,6 +205,10 @@ newTopDownCounters = do
     readOriginal <- newIORef 0   
     readParsed   <- newIORef 0             
     repeatedAki  <- newIORef 0
+
+    leafPayloadsHit   <- newIORef 0
+    leafPayloadsMiss  <- newIORef 0
+    leafPayloadsWrite <- newIORef 0
    
     pure TopDownCounters {..}
 
@@ -226,6 +241,15 @@ markAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTre
         unless (Set.member k visited) $ do
             writeTVar visitedKeys $! Set.insert k visited
             modifyTVar' taTreeSize (+ 1)
+
+-- | `markAsUsed` for many keys at once. They are counted in the tree size
+-- even if some of them were visited before, which only an object on more 
+-- than one manifest can be. It makes the limit stricter, not looser.
+markAllAsUsed :: ValidatorIO es => TopDownContext -> [ObjectKey] -> Eff es ()
+markAllAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTreeSize } ks =
+    unless (null ks) $ liftIO $ do
+        atomicModifyIORef' visitedLeafKeys $ \kss -> (ks : kss, ())
+        atomically $ modifyTVar' taTreeSize (+ length ks)
 
 markAsUsedByHash :: ValidatorIO es => 
                     AppContext -> TopDownContext -> Hash -> Eff es ()
@@ -304,6 +328,41 @@ acceptLeaf topDownContext source child = do
     keep field !a = liftIO $
         atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \as -> (a : as, ())
 
+-- | `acceptLeaf` with `FromShortcut` for all the leaves of a manifest at
+-- once, which `canTakeLeaves` tells they can be. Only the earliest notAfter
+-- of them is remembered, it's when the first of them expires.
+acceptLeafPayloads :: ValidatorIO es => TopDownContext -> LeafPayloadsRow -> Eff es ()
+acceptLeafPayloads topDownContext LeafPayloadsRow { notAfter, leaves = LeafPayloads {..} } =
+    unless (null leafKeys) $ do
+        markAllAsUsed topDownContext leafKeys
+        rememberNotValidAfter topDownContext notAfter
+        let roaCount  = length leafVrps
+            vrpCount  = sum [ length (roaV4 p) + length (roaV6 p) | T2 p _ <- leafVrps ]
+            splCount  = length leafSpls
+            aspaCount = length leafAspas
+            n = Count . fromIntegral
+        updateMetric @ValidationMetric @_ $ \m -> m
+            & #validRoaNumber  %~ (+ n roaCount)
+            & #vrpCounter      %~ (+ n vrpCount)
+            & #validSplNumber  %~ (+ n splCount)
+            & #validAspaNumber %~ (+ n aspaCount)
+            & #validBgpNumber  %~ (+ n (length leafBgpCerts))
+            & #validGbrNumber  %~ (+ n (length leafGbrs))
+        bump (.shortcutRoa)  roaCount
+        bump (.shortcutSpl)  splCount
+        bump (.shortcutAspa) aspaCount
+        keepAll #vrps leafVrps
+        keepAll #spls leafSpls
+        keepAll #aspas leafAspas
+        keepAll #bgpCerts leafBgpCerts
+        keepAll #gbrs leafGbrs
+  where
+    counters = topDownContext.allTas.topDownCounters
+    bump f k = liftIO $ atomicModifyIORef' (f counters) $ \c -> (c + k, ())
+    keepAll :: MonadIO m => Getting (IORef [a]) PayloadBuilder (IORef [a]) -> [a] -> m ()
+    keepAll field as = unless (null as) $ liftIO $
+        atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \xs -> (as <> xs, ())
+
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Validator es => Eff es ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Validator es => Eff es ()
 oneMoreMftShort :: Validator es => Eff es ()
@@ -330,7 +389,8 @@ applyValidationSideEffects
     appContext@AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do        
     (visitedSize, elapsed) <- timedMS $ do
-        vks <- readTVarIO visitedKeys            
+        leafKeys <- readIORef visitedLeafKeys
+        vks <- (<> Set.fromList (concat leafKeys)) <$> readTVarIO visitedKeys
         rwTxT database $ \tx -> DB.markAsValidated tx vks worldVersion        
         pure $! Set.size vks
     
