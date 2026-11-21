@@ -229,17 +229,19 @@ validateNoUnknownCriticalExtensions extensions =
         
 
 -- | Validate specifically the TA's self-signed certificate.
-validateTACert :: Validator es => TAL -> RpkiURL -> ParsedRpkiObject -> Eff es WellStructuredCaCert
-validateTACert tal u (CerRO taCert) = do
+-- | https://www.rfc-editor.org/rfc/rfc10097#section-2, steps 2 and 3.
+validateTACert :: Validator es => TAL -> Now -> RpkiURL -> ParsedRpkiObject -> Eff es WellStructuredCaCert
+validateTACert tal now u (CerRO taCert) = do
     let spki = getSubjectPublicKeyInfo taCert
     let talSPKI = SPKI $ publicKeyInfo tal
     unless (talSPKI == spki) $ vError $ SPKIMismatch talSPKI spki
+    void $ validateObjectValidityPeriod taCert now
     validateTaCertAKI taCert u
     signatureCheck $ validateSignMaterial taCert taCert
     validateCaCertExtensions $ extractExtensions taCert
     pure $ extractCert taCert
 
-validateTACert _ _ _ = vError UnknownObjectAsTACert
+validateTACert _ _ _ _ = vError UnknownObjectAsTACert
 
 validateTaCertAKI :: (Validator es, WithAKI taCert, WithSKI taCert) =>
     taCert ->
@@ -253,25 +255,35 @@ validateTaCertAKI taCert u =
             | otherwise -> vError $ TACertAKIIsNotEmpty (getURL u)
 
 --
--- Use the tiebreaker logic proposed by 
--- https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/
+-- Use the tiebreaker logic of RFC 10097
+-- https://www.rfc-editor.org/rfc/rfc10097#section-2, steps 4-6.
+-- The fetched certificate is expected to be already validated (steps 2 and 3).
 --
--- Emit a warning when deciding to use the cached certificate 
+-- Emit a warning when deciding to use the cached certificate
 -- instead of the fetched one.
--- 
-chooseTaCert :: Validator es => WellStructuredCaCert -> WellStructuredCaCert -> Eff es WellStructuredCaCert
-chooseTaCert cert cachedCert = do
+--
+chooseTaCert :: Validator es => Now -> WellStructuredCaCert -> WellStructuredCaCert -> Eff es WellStructuredCaCert
+chooseTaCert (Now now) cert cachedCert = do
     let ValidityPeriod notBefore notAfter = getValidityPeriod cert
     let ValidityPeriod cachedNotBefore cachedNotAfter = getValidityPeriod cachedCert
     let bothValidities = TACertValidities {..}
 
-        {- 
+        {-
+            The tiebreak is between two valid certificates. A cached copy
+            that is expired or not valid yet (e.g. stored by an older version
+            that didn't check validity period of the fetched certificate)
+            must not win over a fetched one that is valid.
+        -}
+    if | now < cachedNotBefore || now > cachedNotAfter ->
+            pure cert
+
+        {-
             Check whether the retrieved object has a more recent
             notBefore than the locally cached copy of the retrieved TA.
             If the notBefore of the retrieved object is less recent,
-            use the locally cached copy of the retrieved TA.        
+            use the locally cached copy of the retrieved TA.
         -}
-    if | notBefore < cachedNotBefore -> do
+       | notBefore < cachedNotBefore -> do
             void $ vWarn $ TACertPreferCachedCopy bothValidities
             pure cachedCert
 
