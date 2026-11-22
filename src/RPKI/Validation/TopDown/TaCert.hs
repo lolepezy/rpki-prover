@@ -23,6 +23,7 @@ import           RPKI.Fetch.Fetch
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
+import           RPKI.Time
 
 import           RPKI.Store.Database    (rwTxT)
 import qualified RPKI.Store.Database    as DB
@@ -31,16 +32,16 @@ import           RPKI.TAL
 import           RPKI.Validation.ObjectValidation
 
 
-data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA
+data WhichTA = FetchedTA RpkiURL WellStructuredCaCert | CachedTA
 
 -- | Refresh the TA certificate for the given TAL. Returns whether the
 -- | certificate actually changed (a fresh download that differs from the
 -- | cached copy, or there was no cached copy at all) -- callers use that to
 -- | decide whether the TA needs to be revalidated.
 refreshTaCertificate :: AppContext
-                        -> TAL
-                        -> WorldVersion
-                        -> IO (Either AppError Bool)
+                    -> TAL
+                    -> WorldVersion
+                    -> IO (Either AppError Bool)
 refreshTaCertificate appContext@AppContext {..} tal worldVersion = do
     (r, vs) <- runValidatorIO (newScopes' TAFocus (unTaName taName)) $
                     vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
@@ -111,34 +112,32 @@ fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
                 DB.roAppTxEx db DB.storageError $ \tx ->
                     DB.getTaCertByKey tx taCertKey
 
-        z <- (do 
-                (u, ro) <- fetchTACertificate appContext tal
-                pure $ FetchedTA u ro)
+        -- Steps 1-3 of https://www.rfc-editor.org/rfc/rfc10097#section-2:
+        -- if no location gives a valid certificate, use the cached copy.
+        z <- (do
+                (u, cert) <- fetchTACertificate appContext tal $ \u ro -> do
+                                now <- thisInstant
+                                validateTACert tal now u ro
+                pure $ FetchedTA u cert)
             `catchError`
                 (\_cs -> tryToFallbackToCachedCopy)
 
-        case z of     
-            FetchedTA actualUrl object -> do                                 
-                fetchedCert <- validateTACert tal actualUrl object
-
-                (certToUse, certToStore, changed) <- case cachedTaCertM of
-                    Nothing  -> pure (fetchedCert, fetchedCert, True)
-                    Just cachedTaCert ->
-                        (do
-                            cert <- chooseTaCert fetchedCert cachedTaCert
-                            pure $ if cert == cachedTaCert
-                                then (cachedTaCert, cachedTaCert, False)
-                                else (fetchedCert, fetchedCert, True))
-                        `catchError`
-                            (\_cs (e :: AppError) -> do
-                                logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
-                                pure (cachedTaCert, cachedTaCert, False))
+        case z of
+            FetchedTA actualUrl fetchedCert -> do
+                (certToUse, changed) <- case cachedTaCertM of
+                    Nothing  -> pure (fetchedCert, True)
+                    Just cachedTaCert -> do
+                        now  <- thisInstant
+                        cert <- chooseTaCert now fetchedCert cachedTaCert
+                        pure $ if cert == cachedTaCert
+                            then (cachedTaCert, False)
+                            else (fetchedCert, True)
 
                 case publicationPointsFromTAL tal certToUse of
                     Left e         -> appError $ ValidationE e
                     Right ppAccess -> do
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
-                            taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToStore)) worldVersion
+                            taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToUse)) worldVersion
                             DB.linkObjectToUrl tx actualUrl taCertKey worldVersion
                             DB.saveTA tx (StorableTA tal taCertKey ppAccess actualUrl)
                         pure changed
@@ -154,13 +153,13 @@ fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
             case storableTa of
                 Nothing -> do 
                     logError logger $
-                        [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <>
+                        [i|Could not get a valid TA certificate for #{getTaName tal}, error: #{e}|] <>
                         [i| and there is no cached copy of it.|]
                     appError e
 
                 Just _ -> do  
                     logError logger $ 
-                        [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <> 
+                        [i|Could not get a valid TA certificate for #{getTaName tal}, error: #{e}|] <> 
                         [i| will use cached copy.|]                                        
 
                     pure CachedTA
