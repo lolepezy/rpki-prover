@@ -31,7 +31,8 @@ module RPKI.Store.Database (
     getErikPartition, existingErikPartitions, saveErikPartition, deleteOrphanedErikPartitions,
     getMftsForAKI, findAllMftsByAKI, getMftByKey, getMftMetaByKey,
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
-    getMftShortcutChildFileName,
+    getMftShortcutChildFileName, getMftShortcutCaChildrenLight,
+    getLeafPayloads, saveLeafPayloads, deleteLeafPayloads,
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
     deleteMftShortcut, getBySKI, getBySKIUpTo, getTaCertByKey,
     markAsValidated,
@@ -162,7 +163,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 69
+currentDatabaseVersion = 71
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -735,6 +736,58 @@ getMftShorcutChildrenFull (Tx conn) aki = liftIO $ do
                                 caCert   = caChildValidity <$> valid })
         | (fileName_, childKey, dataBs, valid) <- rows ]
 
+-- | Only the children that are CA certificates, for when the other ones
+-- come from `mft_leaf_payloads`.
+getMftShortcutCaChildrenLight :: MonadIO m => Tx mode -> AKI -> m (Map.Map ObjectKey (MftChild, Maybe CaChildValidity))
+getMftShortcutCaChildrenLight (Tx conn) aki = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT c.child_key, s.data, c.valid
+            FROM mft_shortcut_ca_children c
+            JOIN shortcuts s ON s.object_key = c.child_key
+            WHERE c.aki = ?
+        |]
+        (Only aki)
+    pure $! Map.fromList
+        [ (childKey, (deserialiseCompressed dataBs, Just $ caChildValidity valid))
+        | (childKey, dataBs, valid) <- rows ]
+
+-- | The leaf payloads of the shortcut of the manifest, if all the leaves are
+-- valid at this moment, as `validateObjectValidityPeriod` checks it. The 
+-- blob is decoded when the leaves are used.
+getLeafPayloads :: MonadIO m => Tx mode -> AKI -> ObjectKey -> Instant -> m (Maybe LeafPayloadsRow)
+getLeafPayloads (Tx conn) aki mftKey (Instant now_) = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT not_before, not_after, has_ca_children, data
+            FROM mft_leaf_payloads
+            WHERE aki = ? AND mft_key = ? AND not_before <= ? AND not_after >= ?
+        |]
+        (aki, mftKey, now_, now_)
+    pure $! case rows of
+        (notBefore, notAfter, hasCa, dataBs) : _ ->
+            Just $! LeafPayloadsRow {
+                    mftKey        = mftKey,
+                    notBefore     = Instant notBefore,
+                    notAfter      = Instant notAfter,
+                    hasCaChildren = hasCa /= (0 :: Int),
+                    leaves        = deserialiseCompressed dataBs
+                }
+        [] -> Nothing
+
+saveLeafPayloads :: MonadIO m => Tx 'RW -> AKI -> ObjectKey -> Instant -> Instant -> Bool -> BS.ByteString -> m ()
+saveLeafPayloads (Tx conn) aki mftKey (Instant notBefore) (Instant notAfter) hasCa blob = liftIO $
+    execute conn
+        [sql|
+            INSERT OR REPLACE INTO mft_leaf_payloads(aki, mft_key, not_before, not_after, has_ca_children, data)
+            VALUES (?, ?, ?, ?, ?, ?)
+        |]
+        (aki, mftKey, notBefore, notAfter, if hasCa then 1 else 0 :: Int, blob)
+
+deleteLeafPayloads :: MonadIO m => Tx 'RW -> AKI -> m ()
+deleteLeafPayloads (Tx conn) aki = liftIO $
+    execute conn "DELETE FROM mft_leaf_payloads WHERE aki = ?" (Only aki)
+
 -- | On-demand single-row lookup, used only by the rare TroubledChild fallback
 -- on the light (file_name-free) read path.
 getMftShortcutChildFileName :: MonadIO m => Tx mode -> AKI -> ObjectKey -> m (Maybe Text)
@@ -857,11 +910,12 @@ getTaCertByKey tx k =
    because the set of validated keys is expected to be large (every object touched during
    top-down validation). Upserting these key by key would likely cause largely amplified disk writes.
 -}
-markAsValidated :: MonadIO m
-                => Tx 'RW -> Set.Set ObjectKey -> WorldVersion -> m ()
+-- | The keys can be a lazy list: they are consumed as they are inserted.
+markAsValidated :: (MonadIO m, Foldable f)
+                => Tx 'RW -> f ObjectKey -> WorldVersion -> m ()
 markAsValidated tx allKeys worldVersion =
     liftIO $ void $ updateValidatedByVersionMap tx $ \m ->
-        foldr (`Map.insert` worldVersion) m allKeys
+        foldl' (\m' k -> Map.insert k worldVersion m') m allKeys
 
 -- ---------------------------------------------------------------------------
 -- TA functions

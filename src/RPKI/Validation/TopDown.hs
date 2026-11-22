@@ -499,11 +499,15 @@ validateManifests
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
     ca aki = do
-    (mfts, shortcut) <- roTxT database $ \tx ->
-        (,) <$> DB.getMftsForAKI tx aki
-            <*> case validationAlgorithm of
-                    FullEveryIteration -> pure Nothing
-                    Incremental        -> DB.getMftShorcutMeta tx aki
+    (mfts, shortcut, cachedLeaves) <- roTxT database $ \tx -> do
+        mfts_ <- DB.getMftsForAKI tx aki
+        case validationAlgorithm of
+            FullEveryIteration -> pure (mfts_, Nothing, Nothing)
+            Incremental        -> do
+                shortcut_ <- DB.getMftShorcutMeta tx aki
+                -- The leaf payloads of the shortcut, if all the leaves are valid now
+                leafPayloads <- forM shortcut_ $ \m -> DB.getLeafPayloads tx aki m.key (unNow now)
+                pure (mfts_, shortcut_, join leafPayloads)
 
     let (plan, premature) = planManifests now mfts shortcut
 
@@ -531,34 +535,35 @@ validateManifests
 
         UseShortcut meta ->
             fromShortcut mfts meta $
-                useShortcut mfts meta
+                useShortcut cachedLeaves mfts meta
 
         OnlyShortcut meta -> do
             vWarn $ NoMFTButCachedMft aki
             fromShortcut mfts meta $
-                onlyCollectPayloads meta
+                onlyCollectPayloads cachedLeaves meta
 
         DiffWithShortcut meta (newest :| newer) ->
             fromShortcut mfts meta $ do
                 fullCa <- getFullCa appContext topDownContext ca
-                tryNewerMfts fallBackFrom mfts meta fullCa (newest : newer)
+                tryNewerMfts cachedLeaves fallBackFrom mfts meta fullCa (newest : newer)
   where
     validationAlgorithm = config.validationConfig.validationAlgorithm
+    validationRFC       = config.validationConfig.validationRFC
 
     -- The manifests newer than the one of the shortcut, newest first: use the
     -- first one that the CA signed and that is valid. Each one that isn't valid,
     -- or is gone from the cache, is fallen back from and the next one is tried.
     -- When none of them is valid, the shortcut is, so it is the latest valid
     -- manifest to fall back to.
-    tryNewerMfts fallBackFrom mfts meta fullCa mftMetas =
+    tryNewerMfts cachedLeaves fallBackFrom mfts meta fullCa mftMetas =
         nextSignedMft appContext topDownContext fullCa mftMetas >>= \case
-            Nothing -> useShortcut mfts meta
+            Nothing -> useShortcut cachedLeaves mfts meta
             Just (candidate, olderMfts) ->
                 tryManifest appContext candidate
                     (\e reportFallback -> do
                         void $ fallBackFrom e
                         reportFallback
-                        tryNewerMfts fallBackFrom mfts meta fullCa olderMfts)
+                        tryNewerMfts cachedLeaves fallBackFrom mfts meta fullCa olderMfts)
                     (\mft -> do
                         markAsUsed topDownContext $ mft ^. #key
                         tryOneMftWithShortcut meta fullCa mft)
@@ -589,11 +594,11 @@ validateManifests
     -- reported every time, also the ones about its children. There's nothing
     -- to fall back to if that fails. If the manifest is gone from the cache,
     -- there's nothing to validate and only the shortcut is left.
-    useShortcut mfts meta
+    useShortcut cachedLeaves mfts meta
         | meta.hasIssues && any ((== meta.key) . (.key)) mfts =
             withMft appContext meta.key $ validateAgain meta
         | otherwise =
-            onlyCollectPayloads meta
+            onlyCollectPayloads cachedLeaves meta
 
     fromShortcut mfts meta validate = do
         markAsUsed topDownContext meta.key
@@ -616,6 +621,7 @@ validateManifests
                     (Left fullCa)
                     (findAndValidateCrl appContext topDownContext fullCa mft aki)
                     (getResources ca)
+                    Nothing
 
     -- The manifest of the shortcut was accepted with warnings: validate it again,
     -- all its children too, which gives all the payloads. There's nothing left
@@ -631,12 +637,13 @@ validateManifests
         fullChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenFull tx aki
         pure MftShortcut { nonCrlEntries = fullChildren, .. }
 
-    -- The steady-state "nothing changed" path: fetch the light children map,
-    -- which never selects file_name.
-    onlyCollectPayloads meta@DB.MftShortcutMeta{..} = do
+    -- The steady-state "nothing changed" path. The leaves are taken from the 
+    -- leaf payloads of the shortcut when they can be, and then only the CA 
+    -- certificates are read. Otherwise all the children are read (the light
+    -- map, which never selects file_name).
+    onlyCollectPayloads cachedLeaves meta@DB.MftShortcutMeta{..} = do
         let crlKey = crlShortcut.key
         markAsUsed topDownContext crlKey
-        lightChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenLight tx aki
         -- A CA certificate validated in full is a new one (or a troubled one) and its
         -- resources may be different from the ones the shortcuts of its children were
         -- made with, e.g. it's re-issued with fewer resources. Then the resources of
@@ -644,12 +651,44 @@ validateManifests
         let fullCa = case ca of
                 CaFull c  -> Left c
                 CaShort _ -> Right $ getFullCa appContext topDownContext ca
-        collectPayloads appContext topDownContext aki meta 
-                (Map.map (uncurry ChildLight) lightChildren) 
-                Nothing
-                fullCa
-                (getCrlByKey appContext crlKey)
-                (getResources ca)
+
+        -- The leaves are taken as they are on their shortcuts unless their 
+        -- resources are checked again, see `validateShortcut` in `collectPayloads`
+        let resourcesChecked = case ca of
+                CaFull _  -> True
+                CaShort _ -> validationRFC == ReconsideredRFC && topDownContext.overclaimingHappened
+            takeLeaves leafPayloads =
+                not resourcesChecked && canTakeLeaves now multiLocationKeys meta.key leafPayloads
+
+            collect children leafPayloads =
+                collectPayloads appContext topDownContext aki meta
+                        (Map.map (uncurry ChildLight) children)
+                        Nothing
+                        fullCa
+                        (getCrlByKey appContext crlKey)
+                        (getResources ca)
+                        leafPayloads
+
+        case mfilter takeLeaves cachedLeaves of
+            Just leafPayloads -> do
+                increment topDownCounters.leafPayloadsHit
+                caChildren <- if leafPayloads.hasCaChildren
+                    then roTxT database $ \tx -> DB.getMftShortcutCaChildrenLight tx aki
+                    else pure mempty
+                collect caChildren (Just leafPayloads)
+
+            Nothing -> do
+                increment topDownCounters.leafPayloadsMiss
+                children <- roTxT database $ \tx -> DB.getMftShorcutChildrenLight tx aki
+                case mfilter takeLeaves $ leafPayloadsOf meta.key children of
+                    -- Only leaf payloads that can be taken now are written, the
+                    -- ones of e.g. an expired leaf would be written every time
+                    Just leafPayloads -> do
+                        increment topDownCounters.leafPayloadsWrite
+                        saveLeafPayloads shortcutQueue aki leafPayloads
+                        collect (Map.filter (isJust . snd) children) (Just leafPayloads)
+                    Nothing ->
+                        collect children Nothing
 
 
 -- Validate the manifests that the CA signed in full, falling back to the next one
@@ -1393,11 +1432,12 @@ collectPayloads :: (ValidatorIO es, Concurrent :> es) =>
                 -> Either (Located WellStructuredCaCert) (Eff es (Located WellStructuredCaCert))
                 -> Eff es (Keyed (Validated CrlObject))
                 -> AllResources
+                -> Maybe LeafPayloadsRow
                 -> Eff es ()
 collectPayloads
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
-    childrenAki meta childrenMap childrenToCheck findFullCa findValidCrl parentCaResources = do
+    childrenAki meta childrenMap childrenToCheck findFullCa findValidCrl parentCaResources leafPayloads = do
 
     -- Filter children that we actually want to go through here
     let filteredChildren =
@@ -1430,6 +1470,9 @@ collectPayloads
                     else pure $ \_ _ ->
                             -- Should never happen, there are no troubled children
                             integrityError appContext [i|Impossible happened!|]
+
+        -- The leaves that are not in `childrenMap`, all at once
+        for_ leafPayloads $ acceptLeafPayloads topDownContext
 
         collectResults filteredChildren (getChildPayloads troubledValidation)
 

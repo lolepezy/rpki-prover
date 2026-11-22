@@ -29,6 +29,9 @@
 --
 -- `--debug` logs TopDown's counters of the paths it took.
 --
+-- `--only=ripe,arin` validates only these TAs, the way a validation worker
+-- often does, instead of all of them at once.
+--
 -- `--max-depth=N`, `--max-tree-size=N` and `--max-repositories=N` set the
 -- limits of validation, as `--max-certificate-path-depth`, 
 -- `--max-total-tree-size` and `--max-ta-repositories` do for the program.
@@ -98,7 +101,7 @@ main :: IO ()
 main = do
     (flags, args) <- List.partition ("--" `List.isPrefixOf`) <$> getArgs
     let knownFlag f = f `elem` ["--full", "--reconsidered", "--strict-manifests", "--debug"]
-                   || any (`List.isPrefixOf` f) ["--now=", "--dump=", "--max-depth=", "--max-tree-size=", "--max-repositories="]
+                   || any (`List.isPrefixOf` f) ["--now=", "--dump=", "--max-depth=", "--max-tree-size=", "--max-repositories=", "--only="]
     -- A mistyped flag would quietly compare the wrong things
     case filter (not . knownFlag) flags of
         []      -> pure ()
@@ -126,7 +129,8 @@ main = do
     -- At debug level validation only adds TopDown's counters of what it did
     let logLevel = if hasFlag "--debug" then DebugL else InfoL
     withLogger (newLogConfig logLevel MainLog) $ \logger -> do
-        tals <- ensureTals logger talDir
+        let onlyTas = [ Text.splitOn "," (Text.pack o) | Just o <- map (List.stripPrefix "--only=") flags ]
+        tals <- filter (\t -> all (unTaName (getTaName t) `elem`) onlyTas) <$> ensureTals logger talDir
 
         cpuCount_ <- fromIntegral <$> getNumCapabilities
         let config = defaultConfig

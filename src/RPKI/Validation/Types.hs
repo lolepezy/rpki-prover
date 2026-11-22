@@ -141,6 +141,35 @@ data GbrShortcut = GbrShortcut {
     deriving anyclass (TheBinary)
 
 
+-- | The payloads of all the children of a manifest shortcut that are not CA
+-- certificates (the leaves), in one value, for when every one of them is
+-- taken as it is on its shortcut. `leafKeys` are the keys of all of them,
+-- they are marked as used.
+data LeafPayloads = LeafPayloads {
+        leafKeys     :: [ObjectKey],
+        leafVrps     :: [T2 VrpsPerAs ObjectKey],
+        leafSpls     :: [SplPayload],
+        leafAspas    :: [Aspa],
+        leafGbrs     :: [T2 Hash Gbr],
+        leafBgpCerts :: [BGPSecPayload]
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+-- | The leaf payloads of a manifest shortcut and what they can be used
+-- under: the shortcut is for the same manifest, and all the leaves are
+-- valid, i.e. it's between the latest notBefore and the earliest notAfter
+-- of them. `hasCaChildren` tells whether there are other children to read.
+data LeafPayloadsRow = LeafPayloadsRow {
+        mftKey        :: ObjectKey,
+        notBefore     :: Instant,
+        notAfter      :: Instant,
+        hasCaChildren :: Bool,
+        -- Lazy, so that a row read from the database is only decoded if it's used
+        leaves        :: ~LeafPayloads
+    }
+    deriving stock (Show, Eq, Generic)
+
 -- | The validity period of the object of a child, `Nothing` for a troubled one.
 childValidityPeriod :: MftChild -> Maybe ValidityPeriod
 childValidityPeriod = \case
