@@ -20,7 +20,10 @@ import           Data.IORef
 import           Data.Map.Monoidal.Strict         (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Set                         (Set)
+import           Data.Int                         (Int64)
+import qualified Data.List                        as List
 import qualified Data.Set                         as Set
+import qualified Data.Vector.Unboxed              as VU
 import           Data.Text                        (Text)
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
@@ -38,6 +41,7 @@ import           RPKI.Resources.Types
 
 import           RPKI.Store.Database    (roTxT, rwTxT)
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Store.SQLite      (HasInt64Key (..))
 import           RPKI.Time
 import           RPKI.Util
 import           RPKI.Validation.Types
@@ -84,11 +88,11 @@ data AllTasTopDownContext = AllTasTopDownContext {
         now               :: Now,
         worldVersion      :: WorldVersion,
         visitedKeys       :: TVar (Set ObjectKey),        
-        -- | Keys of the leaves taken in bulk (`acceptLeafPayloads`), a list
-        -- per manifest. They join `visitedKeys` at the end: adding thousands
-        -- of them to it at once is a long transaction that the short ones of
-        -- `markAsUsed` keep restarting.
-        visitedLeafKeys   :: IORef [[ObjectKey]],
+        -- | Keys of the leaves taken in bulk (`acceptLeafPayloads`), unboxed,
+        -- a vector per manifest. They are not in `visitedKeys`: adding 
+        -- thousands of them to it at once is a long transaction that the 
+        -- short ones of `markAsUsed` keep restarting.
+        visitedLeafKeys   :: IORef [VU.Vector Int64],
         publicationPoints :: PublicationPoints,
         shortcutQueue     :: ClosableQueue MftShortcutOp,
         topDownCounters   :: TopDownCounters IORef,
@@ -248,8 +252,9 @@ markAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTre
 markAllAsUsed :: ValidatorIO es => TopDownContext -> [ObjectKey] -> Eff es ()
 markAllAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTreeSize } ks =
     unless (null ks) $ liftIO $ do
-        atomicModifyIORef' visitedLeafKeys $ \kss -> (ks : kss, ())
-        atomically $ modifyTVar' taTreeSize (+ length ks)
+        let !keys = VU.fromList $ map toInt64 ks
+        atomicModifyIORef' visitedLeafKeys $ \kss -> (keys : kss, ())
+        atomically $ modifyTVar' taTreeSize (+ VU.length keys)
 
 markAsUsedByHash :: ValidatorIO es => 
                     AppContext -> TopDownContext -> Hash -> Eff es ()
@@ -359,9 +364,12 @@ acceptLeafPayloads topDownContext LeafPayloadsRow { notAfter, leaves = LeafPaylo
   where
     counters = topDownContext.allTas.topDownCounters
     bump f k = liftIO $ atomicModifyIORef' (f counters) $ \c -> (c + k, ())
+    -- One by one, as `acceptLeaf` does, not as `as <> xs`: that copies `as` 
+    -- when the payloads are put together at the end, which is when validation
+    -- takes the most memory.
     keepAll :: MonadIO m => Getting (IORef [a]) PayloadBuilder (IORef [a]) -> [a] -> m ()
     keepAll field as = unless (null as) $ liftIO $
-        atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \xs -> (as <> xs, ())
+        atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \xs -> (List.foldl' (flip (:)) xs as, ())
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Validator es => Eff es ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Validator es => Eff es ()
@@ -389,10 +397,13 @@ applyValidationSideEffects
     appContext@AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do        
     (visitedSize, elapsed) <- timedMS $ do
+        visited  <- readTVarIO visitedKeys
         leafKeys <- readIORef visitedLeafKeys
-        vks <- (<> Set.fromList (concat leafKeys)) <$> readTVarIO visitedKeys
-        rwTxT database $ \tx -> DB.markAsValidated tx vks worldVersion        
-        pure $! Set.size vks
+        -- Streamed into the map of validated objects, not put in one set
+        -- first: this is when validation takes the most memory
+        let allKeys = Set.toList visited <> [ fromInt64 k | ks <- leafKeys, k <- VU.toList ks ]
+        rwTxT database $ \tx -> DB.markAsValidated tx allKeys worldVersion
+        pure $! Set.size visited + sum (map VU.length leafKeys)
     
     liftIO $ reportCounters appContext topDownCounters        
     logDebug logger [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]

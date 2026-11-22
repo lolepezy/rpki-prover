@@ -163,7 +163,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 70
+currentDatabaseVersion = 71
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -775,16 +775,14 @@ getLeafPayloads (Tx conn) aki mftKey (Instant now_) = liftIO $ do
                 }
         [] -> Nothing
 
--- | Nothing is written if the manifest is gone from the cache, it would fail
--- the foreign key and the whole transaction.
 saveLeafPayloads :: MonadIO m => Tx 'RW -> AKI -> ObjectKey -> Instant -> Instant -> Bool -> BS.ByteString -> m ()
 saveLeafPayloads (Tx conn) aki mftKey (Instant notBefore) (Instant notAfter) hasCa blob = liftIO $
     execute conn
         [sql|
             INSERT OR REPLACE INTO mft_leaf_payloads(aki, mft_key, not_before, not_after, has_ca_children, data)
-            SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM objects WHERE object_key = ?)
+            VALUES (?, ?, ?, ?, ?, ?)
         |]
-        (aki, mftKey, notBefore, notAfter, if hasCa then 1 else 0 :: Int, blob, mftKey)
+        (aki, mftKey, notBefore, notAfter, if hasCa then 1 else 0 :: Int, blob)
 
 deleteLeafPayloads :: MonadIO m => Tx 'RW -> AKI -> m ()
 deleteLeafPayloads (Tx conn) aki = liftIO $
@@ -912,11 +910,12 @@ getTaCertByKey tx k =
    because the set of validated keys is expected to be large (every object touched during
    top-down validation). Upserting these key by key would likely cause largely amplified disk writes.
 -}
-markAsValidated :: MonadIO m
-                => Tx 'RW -> Set.Set ObjectKey -> WorldVersion -> m ()
+-- | The keys can be a lazy list: they are consumed as they are inserted.
+markAsValidated :: (MonadIO m, Foldable f)
+                => Tx 'RW -> f ObjectKey -> WorldVersion -> m ()
 markAsValidated tx allKeys worldVersion =
     liftIO $ void $ updateValidatedByVersionMap tx $ \m ->
-        foldr (`Map.insert` worldVersion) m allKeys
+        foldl' (\m' k -> Map.insert k worldVersion m') m allKeys
 
 -- ---------------------------------------------------------------------------
 -- TA functions

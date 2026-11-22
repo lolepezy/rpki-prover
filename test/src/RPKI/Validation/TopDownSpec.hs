@@ -763,16 +763,9 @@ shouldKeepLeafPayloadsInStep =
 
         writeShortcuts appContext $ \q -> replaceMftShortcut q aki shortcut
         save
+        storedNow >>= HU.assertEqual "They are there again" (Just row)
         DB.rwTx db $ \tx -> DB.deleteObjectByKey tx [roa2]
         assertGone "The object of a leaf is deleted"
-
-        save
-        storedNow >>= HU.assertEqual "They are there again" (Just row)
-        DB.rwTx db $ \tx -> DB.deleteObjectByKey tx [mftKey]
-        assertGone "The manifest is deleted"
-
-        save
-        assertGone "Not written for a manifest that is gone"
 
 
 -- | Validating the manifest of a shortcut takes its leaves from the leaf

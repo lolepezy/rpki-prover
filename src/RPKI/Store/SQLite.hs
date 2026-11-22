@@ -599,17 +599,20 @@ schemaDDL =
     -- instead of `mft_shortcut_payload_children` when the shortcut is for
     -- the same manifest and all the leaves are valid: `not_before` is the
     -- latest notBefore of them and `not_after` the earliest notAfter.
+    --
+    -- `mft_key` doesn't reference `objects`: checking that on every write 
+    -- was most of what writing them costs. They are only used with the
+    -- shortcut of the same manifest, which is what they have to agree with.
     , [sql|
         CREATE TABLE IF NOT EXISTS mft_leaf_payloads (
             aki             BLOB    NOT NULL PRIMARY KEY,
-            mft_key         INTEGER NOT NULL REFERENCES objects(object_key) ON DELETE CASCADE,
+            mft_key         INTEGER NOT NULL,
             not_before      INTEGER NOT NULL,
             not_after       INTEGER NOT NULL,
             has_ca_children INTEGER NOT NULL,
             data            BLOB    NOT NULL
         )
       |]
-    , "CREATE INDEX IF NOT EXISTS idx_mft_leaf_payloads_mft_key ON mft_leaf_payloads(mft_key)"
     -- The blob is what the children were when it was written. A child that
     -- is gone makes it stale, whatever deletes it: the shortcut writes, or
     -- a cascade from `objects` or `shortcuts` (which fires triggers too).

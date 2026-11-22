@@ -74,4 +74,4 @@
   all of them are valid, validation takes them from there instead of going
   through them one by one. It takes about 30% less CPU, half as much for
   ARIN with its big manifests.
-- Database version 70: the cache is rebuilt on the first start.
+- Database version 71: the cache is rebuilt on the first start.
