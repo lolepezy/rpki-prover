@@ -20,8 +20,22 @@ import qualified Test.Tasty.HUnit        as HU
 
 import Network.Wreq
 
+import Data.Hourglass (Seconds(..))
+import Data.Time.Calendar (fromGregorian)
+import Data.Time.Clock (UTCTime(..))
+
 httpSpec :: TestTree
 httpSpec = testGroup "Unit tests for Http updates" [
+    HU.testCase "Should parse Retry-After" $ do
+        -- It's a Friday
+        let now = UTCTime (fromGregorian 2026 11 13) 0
+        HU.assertEqual "Seconds" (Just (Seconds 120)) (parseRetryAfter now "120")
+        HU.assertEqual "Seconds with spaces" (Just (Seconds 7)) (parseRetryAfter now " 7 ")
+        HU.assertEqual "Negative seconds" Nothing (parseRetryAfter now "-1")
+        HU.assertEqual "Date" (Just (Seconds 120)) (parseRetryAfter now "Fri, 13 Nov 2026 00:02:00 GMT")
+        HU.assertEqual "Date in the past" (Just (Seconds 0)) (parseRetryAfter now "Thu, 12 Nov 2026 00:00:00 GMT")
+        HU.assertEqual "Garbage" Nothing (parseRetryAfter now "soon"),
+
     HU.testCase "Should download and calculate hash and size" $ do        
         withSystemTempDirectory "rpki-http-spec" $ \tmpDir -> do
             let maxSize = testConfig ^. typed @RrdpConf . #maxSize

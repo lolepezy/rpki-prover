@@ -1,8 +1,11 @@
 module RPKI.RRDP.ParseSpec where
 
+import           Control.Lens                      ((^.))
 import           Data.ByteString.Short             as BSS
+import           Data.Int                          (Int64)
 
 import           RPKI.Domain
+import           RPKI.Reporting                    (RrdpError(..))
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 
@@ -10,6 +13,7 @@ import           Test.QuickCheck.Arbitrary.Generic
 import           Test.QuickCheck.Monadic
 import           Test.Tasty
 import           Test.Tasty.QuickCheck             as QC
+import qualified Test.Tasty.HUnit                  as HU
 
 import           Data.String.Interpolate
 
@@ -31,7 +35,17 @@ rrdpXmlLazyParsingGroup = testGroup "RRDP parsing"
 
     QC.testProperty
       "Generate and parse back a notification file"      
-      prop_generate_and_parse_notification_creates_same_object
+      prop_generate_and_parse_notification_creates_same_object,
+
+    HU.testCase "Should only accept serials that fit into 64 bits" $ do
+      notification :: Notification <- QC.generate arbitrary
+      let parseWithSerial s = parseNotification $ convert $ 
+            notificationToXml $ notification { serial = RrdpSerial s, deltas = [] }
+      let biggest = toInteger (maxBound :: Int64)
+      HU.assertEqual "Should parse the biggest serial" 
+        (Right $ RrdpSerial biggest) ((^. #serial) <$> parseWithSerial biggest)
+      HU.assertEqual "Should reject a bigger one" 
+        (Left $ BrokenSerial $ convert $ show $ biggest + 1) ((^. #serial) <$> parseWithSerial (biggest + 1))
   ]
 
 prop_generate_and_parse_snapshot_creates_same_object :: QC.Property

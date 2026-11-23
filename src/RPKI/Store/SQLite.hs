@@ -612,6 +612,17 @@ schemaDDL =
             PRIMARY KEY (key, kind)
         )
       |]
+    -- RRDP session and serial of a repository, they are updated with every 
+    -- snapshot or delta, so they are kept apart from the rest of it
+    , [sql|
+        CREATE TABLE IF NOT EXISTS rrdp_meta (
+            key         BLOB NOT NULL PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            serial      INTEGER NOT NULL,
+            integrity   BLOB NOT NULL,
+            enforcement BLOB
+        )
+      |]
     , [sql|
             CREATE TABLE IF NOT EXISTS validation_outcomes (
                     ta_name     TEXT,
@@ -670,7 +681,7 @@ dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
     , "shortcuts", "mft_shortcut_meta"
     , "trust_anchors"
     , "objects", "urls"
-    , "repositories"
+    , "repositories", "rrdp_meta"
     , "validations", "metrics", "roas", "spls", "aspas", "gbrs", "bgps"
     , "validation_outcomes", "slurm"
     , "jobs", "metadata", "validated_by_version"

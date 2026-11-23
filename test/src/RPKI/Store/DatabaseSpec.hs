@@ -37,6 +37,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.RepositorySpec
+import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
@@ -224,6 +225,9 @@ repositoryStoreGroup = testGroup "Repository storage test"
     , dbTestCase "Should overwrite metadata and validations" shouldSaveMetaAndValidationAsCorrectSemigroup
     , dbTestCase "Should save and get a mix of RRDP/rsync repositories with validation states, respecting the filter"
         shouldSaveAndGetRepositoriesWithValidationStates
+    , dbTestCase "Should not roll back RRDP metadata when saving a repository" shouldNotRollBackRrdpMeta
+    , dbTestCase "Should advance RRDP serial only from the expected session and serial" shouldAdvanceRrdpSerial
+    , dbTestCase "Should keep the rest of RRDP metadata when updating parts of it" shouldUpdatePartsOfRrdpMeta
     ]
 
 versionStoreGroup :: TestTree
@@ -1019,6 +1023,9 @@ shouldSaveAndGetRepositoriesWithValidationStates io = do
     rwTx db $ \tx -> do
         DB.saveRepositories tx repos
         DB.saveRepositoryValidationStates tx reposWithStates
+        -- RRDP metadata is stored separately 
+        forM_ [ (r ^. #uri, m) | RrdpR r <- repos, Just m <- [r ^. #rrdpMeta] ] $ \(u, m) -> 
+            DB.updateRrdpMeta tx m u
 
     stored <- roTx db $ \tx -> DB.getRepositories tx (const True)
 
@@ -1035,6 +1042,100 @@ shouldSaveAndGetRepositoriesWithValidationStates io = do
         (byUrl storedFiltered)
   where
     byUrl = Map.fromList . map (\(r, vs) -> (getRpkiURL r, (r, vs)))
+
+
+-- | A fetch applies some deltas and fails, then the copy of the repository 
+-- read before the fetch is saved, it must not undo the applied deltas.
+shouldNotRollBackRrdpMeta :: IO DB -> HU.Assertion
+shouldNotRollBackRrdpMeta io = do
+    db <- io
+    repo <- QC.generate QC.arbitrary :: IO RrdpRepository
+    let url       = repo ^. #uri
+    let session   = SessionId "session"
+    let staleRepo = repo & #rrdpMeta ?~ newRrdpMeta session (RrdpSerial 5)
+
+    rwTx db $ \tx -> do 
+        DB.saveRepositories tx [RrdpR staleRepo]
+        DB.setRrdpSession tx url session (RrdpSerial 5)
+
+    forM_ [5, 6] $ \s -> do 
+        r <- rwTx db $ \tx -> DB.advanceRrdpSerial tx url session (RrdpSerial s) (RrdpSerial (s + 1))
+        HU.assertEqual "Should apply delta" (Right ()) r
+
+    rwTx db $ \tx -> DB.saveRepositories tx [RrdpR staleRepo]
+
+    stored <- roTx db $ \tx -> DB.getRrdpRepository tx url
+    HU.assertEqual "Repository should have the latest serial" 
+        (Just (RrdpSerial 7)) (stored ^? _Just . #rrdpMeta . _Just . #serial)
+
+    PublicationPoints (RrdpMap rrdps) _ <- roTx db DB.getPublicationPoints
+    HU.assertEqual "Publication points should have the latest serial" 
+        (Just (RrdpSerial 7)) (Map.lookup url rrdps ^? _Just . #rrdpMeta . _Just . #serial)
+
+
+shouldAdvanceRrdpSerial :: IO DB -> HU.Assertion
+shouldAdvanceRrdpSerial io = do
+    db <- io
+    let url      = RrdpURL $ URI "https://rrdp.example.net/notification.xml"
+    let otherUrl = RrdpURL $ URI "https://rrdp.example.org/notification.xml"
+    let session  = SessionId "session"
+    let advance u s from to = rwTx db $ \tx -> 
+            DB.advanceRrdpSerial tx u s (RrdpSerial from) (RrdpSerial to)
+
+    rwTx db $ \tx -> DB.setRrdpSession tx url session (RrdpSerial 5)
+
+    advance url session 5 6 >>= HU.assertEqual "Should advance from the stored serial" (Right ())
+    advance url session 5 6 >>= HU.assertEqual "Should not advance from another serial" 
+                                    (Left (Just (session, RrdpSerial 6)))
+    advance url (SessionId "other") 6 7 >>= HU.assertEqual "Should not advance in another session" 
+                                    (Left (Just (session, RrdpSerial 6)))
+    advance otherUrl session 6 7 >>= HU.assertEqual "Should not advance without metadata" (Left Nothing)
+
+    meta <- roTx db $ \tx -> DB.getRrdpMeta tx url
+    HU.assertEqual "Serial should be the advanced one" (Just (RrdpSerial 6)) (meta ^? _Just . #serial)
+
+    columns <- roTx db $ \(Tx conn) -> 
+        SQLite.query_ conn "SELECT session_id, serial, typeof(session_id), typeof(serial) FROM rrdp_meta"
+    HU.assertEqual "Session and serial should be stored as text and integer" 
+        [("session" :: Text.Text, 6 :: Int64, "text" :: Text.Text, "integer" :: Text.Text)] columns
+
+    let bigSerial = toInteger (maxBound :: Int64)
+    rwTx db $ \tx -> DB.setRrdpSession tx url session (RrdpSerial bigSerial)
+    big <- roTx db $ \tx -> DB.getRrdpMeta tx url
+    HU.assertEqual "Should keep the biggest serial" (Just (RrdpSerial bigSerial)) (big ^? _Just . #serial)
+
+
+shouldUpdatePartsOfRrdpMeta :: IO DB -> HU.Assertion
+shouldUpdatePartsOfRrdpMeta io = do
+    db <- io
+    let url = RrdpURL $ URI "https://rrdp.example.net/notification.xml"
+    meta         <- QC.generate QC.arbitrary :: IO RrdpMeta
+    integrity    <- QC.generate QC.arbitrary :: IO RrdpIntegrity
+    enforcement  <- QC.generate QC.arbitrary :: IO RrdpEnforcement
+    enforcement' <- QC.generate QC.arbitrary :: IO RrdpEnforcement
+    let getMeta = roTx db $ \tx -> DB.getRrdpMeta tx url
+
+    rwTx db $ \tx -> DB.updateRrdpMeta tx (meta & #enforcement ?~ enforcement) url
+    getMeta >>= HU.assertEqual "Should store all of it" (Just (meta & #enforcement ?~ enforcement))
+
+    rwTx db $ \tx -> DB.setRrdpSession tx url (SessionId "new") (RrdpSerial 1)
+    getMeta >>= HU.assertEqual "Should only change session and serial" 
+        (Just (meta & #enforcement ?~ enforcement & #sessionId .~ SessionId "new" & #serial .~ RrdpSerial 1))
+
+    rwTx db $ \tx -> DB.updateRrdpIntegrity tx url integrity Nothing
+    getMeta >>= HU.assertEqual "Should only change integrity" 
+        (Just (meta & #enforcement ?~ enforcement & #sessionId .~ SessionId "new" 
+                    & #serial .~ RrdpSerial 1 & #integrity .~ integrity))
+
+    rwTx db $ \tx -> DB.updateRrdpIntegrity tx url integrity (Just enforcement')
+    getMeta >>= HU.assertEqual "Should change enforcement" 
+        (Just (meta & #enforcement ?~ enforcement' & #sessionId .~ SessionId "new" 
+                    & #serial .~ RrdpSerial 1 & #integrity .~ integrity))
+
+    rwTx db $ \tx -> DB.setRrdpSession tx (RrdpURL $ URI "https://rrdp.example.org/notification.xml") 
+                                        (SessionId "s") (RrdpSerial 1)
+    other <- roTx db $ \tx -> DB.getRrdpMeta tx (RrdpURL $ URI "https://rrdp.example.org/notification.xml")
+    HU.assertEqual "Should create a new one" (Just $ newRrdpMeta (SessionId "s") (RrdpSerial 1)) other
 
 
 rsyncReposWithCommonHosts :: Int -> IO [RsyncRepository]
